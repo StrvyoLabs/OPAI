@@ -1,7 +1,6 @@
 from functools import lru_cache
 
 from app.core.config import get_settings
-from app.core.ws_manager import connection_manager
 from app.db.session import async_session_maker
 from app.llm.base import PlannerLLM
 from app.llm.groq_planner import GroqPlannerLLM
@@ -107,7 +106,7 @@ def get_planner_llm() -> PlannerLLM:
 
 
 def get_activity_service() -> ActivityService:
-    return ActivityService(connection_manager)
+    return ActivityService()
 
 
 def get_planner_service() -> PlannerService:

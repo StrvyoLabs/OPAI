@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -15,31 +14,26 @@ logger = logging.getLogger(__name__)
 
 
 class ReminderScheduler:
-    """Polls for due payment and maintenance reminders and nudges the owner
-    over WhatsApp. Runs as a background task for the lifetime of the app --
-    no external cron needed for a single-process deployment.
+    """Checks for due payment and maintenance reminders and nudges the owner
+    over WhatsApp. Invoked on-demand by an external trigger (Vercel Cron
+    hitting /cron/check-reminders) rather than an in-process loop, since
+    serverless functions can't keep a background loop running.
     """
 
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
         whatsapp_service: WhatsAppService,
-        poll_interval_seconds: int = 300,
     ) -> None:
         self._session_factory = session_factory
         self._whatsapp_service = whatsapp_service
-        self._poll_interval_seconds = poll_interval_seconds
 
-    async def run_forever(self) -> None:
-        while True:
-            try:
-                await self._process_due_payment_reminders()
-                await self._process_due_maintenance_reminders()
-            except Exception:  # noqa: BLE001 - keep the loop alive regardless
-                logger.exception("Reminder scheduler tick failed")
-            await asyncio.sleep(self._poll_interval_seconds)
+    async def run_once(self) -> dict[str, int]:
+        payment_count = await self._process_due_payment_reminders()
+        maintenance_count = await self._process_due_maintenance_reminders()
+        return {"payment_reminders_sent": payment_count, "maintenance_reminders_sent": maintenance_count}
 
-    async def _process_due_payment_reminders(self) -> None:
+    async def _process_due_payment_reminders(self) -> int:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(PaymentReminder).where(
@@ -65,8 +59,9 @@ class ReminderScheduler:
 
             if due:
                 await session.commit()
+            return len(due)
 
-    async def _process_due_maintenance_reminders(self) -> None:
+    async def _process_due_maintenance_reminders(self) -> int:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(MaintenanceReminder).where(
@@ -89,3 +84,4 @@ class ReminderScheduler:
 
             if due:
                 await session.commit()
+            return len(due)

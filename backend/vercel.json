@@ -1,0 +1,10 @@
+{
+  "builds": [{ "src": "api/index.py", "use": "@vercel/python" }],
+  "routes": [{ "src": "/(.*)", "dest": "api/index.py" }],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [{ "path": "/cron/check-reminders", "schedule": "*/30 * * * *" }]
+}

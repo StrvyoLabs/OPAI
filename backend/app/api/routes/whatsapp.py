@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from fastapi import APIRouter, Query, Request, Response, status
@@ -27,18 +26,15 @@ async def verify_webhook(
     return Response(content=challenge, media_type="text/plain")
 
 
-async def _handle_task(task_id) -> None:
-    async with async_session_maker() as session:
-        task = await session.get(Task, task_id)
-        if task is not None:
-            await get_orchestrator().run(session, task)
-
-
 @router.post("")
 async def receive_webhook(request: Request) -> dict:
     payload = await request.json()
     messages = get_whatsapp_service().parse_incoming(payload)
 
+    # Awaited synchronously (not fire-and-forget) -- serverless functions
+    # don't reliably keep running background tasks after the response is
+    # sent, so the whole plan+execute pipeline has to finish within this
+    # request. Keep the configured function timeout generous.
     async with async_session_maker() as session:
         activity_service = get_activity_service()
         for incoming in messages:
@@ -64,7 +60,7 @@ async def receive_webhook(request: Request) -> dict:
                 task_id=task.id,
             )
 
-            asyncio.create_task(_handle_task(task.id))
+            await get_orchestrator().run(session, task)
 
     return {"status": "received", "count": len(messages)}
 
