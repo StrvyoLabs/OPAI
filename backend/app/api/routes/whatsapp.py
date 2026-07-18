@@ -51,7 +51,6 @@ async def receive_webhook(request: Request) -> dict:
                     wa_message_id=incoming.wa_message_id,
                 )
             )
-            await session.commit()
 
             await activity_service.emit(
                 session,

@@ -1,4 +1,5 @@
 import logging
+import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +19,13 @@ class ExecutorService:
     Steps are independent by default: if one fails, the rest still run --
     a missing customer email shouldn't block an otherwise-unrelated calendar
     booking. The task's final status reflects whether any step failed.
+
+    Status changes are set on the ORM objects but deliberately NOT committed
+    on their own -- ActivityService.emit() commits the whole session, so
+    setting a status change right before the matching emit() call persists
+    both in one round-trip instead of two. Each round-trip to the DB from
+    a serverless function is expensive enough that halving the count here
+    roughly halves total request latency.
     """
 
     def __init__(self, tool_registry: ToolRegistry, activity_service: ActivityService, reply_llm: PlannerLLM) -> None:
@@ -27,17 +35,17 @@ class ExecutorService:
 
     async def execute_plan(self, session: AsyncSession, task: Task, plan: Plan) -> None:
         task.status = TaskStatus.EXECUTING
-        await session.commit()
 
         any_failed = False
 
         for index, step in enumerate(plan.steps):
             preceding_steps = plan.steps[:index]
             if step.tool_name == "send_whatsapp_message" and preceding_steps:
+                t0 = time.monotonic()
                 await self._recompose_reply(task, step, preceding_steps)
+                logger.info("TIMING recompose_reply (Groq call): %.2fs", time.monotonic() - t0)
 
             step.status = PlanStepStatus.RUNNING
-            await session.commit()
             await self._activity_service.emit(
                 session,
                 type=ActivityType.STEP_STARTED,
@@ -51,7 +59,6 @@ class ExecutorService:
                 any_failed = True
                 step.status = PlanStepStatus.FAILED
                 step.error = f"Unknown tool: {step.tool_name}"
-                await session.commit()
                 await self._activity_service.emit(
                     session,
                     type=ActivityType.STEP_FAILED,
@@ -61,12 +68,13 @@ class ExecutorService:
                 )
                 continue
 
+            t_tool = time.monotonic()
             result = await tool.execute(step.tool_input)
+            logger.info("TIMING tool %s: %.2fs", step.tool_name, time.monotonic() - t_tool)
 
             if result.success:
                 step.status = PlanStepStatus.SUCCEEDED
                 step.result = result.output if isinstance(result.output, dict) else {"value": result.output}
-                await session.commit()
                 await self._activity_service.emit(
                     session,
                     type=ActivityType.STEP_SUCCEEDED,
@@ -78,7 +86,6 @@ class ExecutorService:
                 any_failed = True
                 step.status = PlanStepStatus.FAILED
                 step.error = result.error
-                await session.commit()
                 await self._activity_service.emit(
                     session,
                     type=ActivityType.STEP_FAILED,
@@ -96,7 +103,6 @@ class ExecutorService:
                 task.failure_reason = "; ".join(
                     f"Step {s.step_number} ({s.tool_name}): {s.error}" for s in failed_steps
                 )
-                await session.commit()
                 await self._activity_service.emit(
                     session,
                     type=ActivityType.TASK_COMPLETED,
@@ -106,7 +112,6 @@ class ExecutorService:
             return
 
         task.status = TaskStatus.COMPLETED
-        await session.commit()
         await self._activity_service.emit(
             session,
             type=ActivityType.TASK_COMPLETED,
@@ -138,7 +143,6 @@ class ExecutorService:
     async def _fail_task(self, session: AsyncSession, task: Task, reason: str) -> None:
         task.status = TaskStatus.FAILED
         task.failure_reason = reason
-        await session.commit()
         await self._activity_service.emit(
             session,
             type=ActivityType.TASK_FAILED,

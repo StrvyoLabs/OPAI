@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -22,7 +23,14 @@ class PlanningError(Exception):
 
 
 class PlannerService:
-    """Turns a Task's raw request into a persisted Plan using the configured LLM."""
+    """Turns a Task's raw request into a persisted Plan using the configured LLM.
+
+    Status changes are set on the Task/Plan ORM objects but not committed on
+    their own -- ActivityService.emit() commits the whole session, so a
+    status change staged right before the matching emit() persists both in
+    one round-trip. Each round-trip is expensive from a serverless function,
+    so halving the commit count roughly halves total request latency.
+    """
 
     def __init__(
         self,
@@ -40,7 +48,6 @@ class PlannerService:
 
     async def create_plan(self, session: AsyncSession, task: Task) -> Plan:
         task.status = TaskStatus.PLANNING
-        await session.commit()
         await self._activity_service.emit(
             session,
             type=ActivityType.PLANNING_STARTED,
@@ -49,7 +56,10 @@ class PlannerService:
         )
 
         try:
+            t0 = time.monotonic()
             customers = await self._crm_service.list_customers()
+            t1 = time.monotonic()
+            logger.info("TIMING list_customers: %.2fs", t1 - t0)
             context = PlanningContext(
                 request_text=task.raw_request,
                 owner_phone=task.owner_phone,
@@ -60,10 +70,11 @@ class PlannerService:
                 ],
             )
             plan_result = await self._llm.generate_plan(context)
+            t2 = time.monotonic()
+            logger.info("TIMING generate_plan (Groq call): %.2fs", t2 - t1)
         except Exception as exc:  # noqa: BLE001
             task.status = TaskStatus.FAILED
             task.failure_reason = f"Planning failed: {exc}"
-            await session.commit()
             await self._activity_service.emit(
                 session,
                 type=ActivityType.PLAN_FAILED,
@@ -78,7 +89,6 @@ class PlannerService:
         if unknown_tools:
             task.status = TaskStatus.FAILED
             task.failure_reason = f"Plan referenced unknown tools: {unknown_tools}"
-            await session.commit()
             await self._activity_service.emit(
                 session,
                 type=ActivityType.PLAN_FAILED,
@@ -105,8 +115,10 @@ class PlannerService:
 
         task.status = TaskStatus.PLANNED
         session.add(plan)
-        await session.commit()
 
+        # Autoflush pushes the pending inserts before this SELECT runs, so
+        # the plan/steps are visible here even though nothing's committed
+        # yet -- the emit() below performs the actual commit.
         plan = (
             await session.execute(
                 select(Plan).options(selectinload(Plan.steps)).where(Plan.id == plan.id)

@@ -21,8 +21,11 @@ class ActivityService:
         task_id: uuid.UUID | None = None,
         payload: dict[str, Any] | None = None,
     ) -> ActivityEvent:
+        # No refresh needed: id/created_at/updated_at are all set client-side
+        # (see UUIDPKMixin/TimestampMixin) and the session has
+        # expire_on_commit=False, so this object's fields are already
+        # correct post-commit without another round-trip to reload them.
         event = ActivityEvent(task_id=task_id, type=type, message=message, payload=payload)
         session.add(event)
         await session.commit()
-        await session.refresh(event)
         return event

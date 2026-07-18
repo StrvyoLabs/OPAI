@@ -22,9 +22,11 @@ async def plan_request(body: CreateTaskRequest, session: AsyncSession = Depends(
 
     task = Task(owner_phone=body.owner_phone, raw_request=body.raw_request)
     session.add(task)
-    await session.commit()
-    await session.refresh(task)
+    await session.flush()  # only to populate task.id for the emit() below
 
+    # No refresh needed here or at the end: expire_on_commit=False means our
+    # local `task` object's fields (including status, set throughout the
+    # pipeline) stay valid without reloading from the DB.
     await get_activity_service().emit(
         session,
         type=ActivityType.MESSAGE_RECEIVED,
@@ -33,5 +35,4 @@ async def plan_request(body: CreateTaskRequest, session: AsyncSession = Depends(
     )
 
     await get_orchestrator().run(session, task)
-    await session.refresh(task)
     return task
