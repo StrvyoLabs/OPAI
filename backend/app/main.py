@@ -1,7 +1,9 @@
 import logging
+import traceback
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import activity, cron, crm, planner, tasks, whatsapp
 from app.core.config import get_settings
@@ -31,3 +33,18 @@ app.include_router(cron.router)
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "env": settings.app_env}
+
+
+# TEMPORARY: surfaces real tracebacks in the response body to diagnose the
+# intermittent 500s on Vercel, since dashboard log access isn't available
+# here. Remove before considering the deployment done.
+@app.exception_handler(Exception)
+async def debug_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        },
+    )
