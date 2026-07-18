@@ -3,9 +3,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.llm.base import KnownCustomer, PlannerLLM, PlanningContext
 from app.models.activity import ActivityType
@@ -116,15 +114,12 @@ class PlannerService:
         task.status = TaskStatus.PLANNED
         session.add(plan)
 
-        # Autoflush pushes the pending inserts before this SELECT runs, so
-        # the plan/steps are visible here even though nothing's committed
-        # yet -- the emit() below performs the actual commit.
-        plan = (
-            await session.execute(
-                select(Plan).options(selectinload(Plan.steps)).where(Plan.id == plan.id)
-            )
-        ).scalar_one()
-
+        # No re-query needed: plan.steps was just built in Python above, so
+        # the object already has everything the caller needs. (A prior
+        # version re-queried here, but doing so before any flush meant
+        # `plan.id` was still None -- read as a plain Python attribute
+        # access at expression-build time, before autoflush could populate
+        # it -- so the query silently matched nothing.)
         await self._activity_service.emit(
             session,
             type=ActivityType.PLAN_CREATED,
