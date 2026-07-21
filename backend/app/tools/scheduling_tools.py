@@ -66,7 +66,14 @@ class CreateAppointmentTool(ToolAdapter):
             output={
                 "appointment_id": str(appointment.id),
                 "title": appointment.title,
-                "scheduled_at": appointment.scheduled_at.isoformat(),
+                # Pre-localized on purpose: this result feeds the WhatsApp
+                # reply composer, which reads times as plain text -- a raw
+                # UTC ISO string gets its hour read literally (e.g. "11:00
+                # am" instead of "4:30 pm" for an 11:00 UTC / IST+5:30
+                # appointment), so give it the only string it needs.
+                "scheduled_at_local": appointment.scheduled_at.astimezone(self._timezone).strftime(
+                    "%A, %d %b %Y at %I:%M %p"
+                ),
             },
         )
 
@@ -95,10 +102,12 @@ class CreatePaymentReminderTool(ToolAdapter):
         crm_service: CRMService,
         invoice_service: InvoiceService,
         reminder_service: ReminderService,
+        business_timezone: str,
     ) -> None:
         self._crm_service = crm_service
         self._invoice_service = invoice_service
         self._reminder_service = reminder_service
+        self._timezone = ZoneInfo(business_timezone)
 
     async def execute(self, tool_input: dict) -> ToolResult:
         customer_name = tool_input.get("customer_name")
@@ -128,6 +137,7 @@ class CreatePaymentReminderTool(ToolAdapter):
             output={
                 "reminder_id": str(reminder.id),
                 "invoice_number": invoice.invoice_number,
-                "remind_at": remind_at.isoformat(),
+                # Pre-localized -- see the comment in CreateAppointmentTool.
+                "remind_at_local": remind_at.astimezone(self._timezone).strftime("%A, %d %b %Y"),
             },
         )

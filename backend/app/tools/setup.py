@@ -48,7 +48,11 @@ def register_default_tools(
     )
     registry.register(SendEmailTool(email_service))
     registry.register(CreateAppointmentTool(crm_service, appointment_service, business_timezone))
-    registry.register(CreatePaymentReminderTool(crm_service, invoice_service, reminder_service))
+    registry.register(
+        CreatePaymentReminderTool(crm_service, invoice_service, reminder_service, business_timezone)
+    )
     registry.register(MarkInvoicePaidTool(crm_service, invoice_service))
     registry.register(AddEquipmentTool(crm_service, equipment_service))
-    registry.register(ScheduleMaintenanceReminderTool(crm_service, maintenance_reminder_service))
+    registry.register(
+        ScheduleMaintenanceReminderTool(crm_service, maintenance_reminder_service, business_timezone)
+    )

@@ -1,5 +1,6 @@
 import logging
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.services.crm_service import CRMService, CustomerNotFoundError
 from app.services.equipment_service import EquipmentService
@@ -141,9 +142,15 @@ class ScheduleMaintenanceReminderTool(ToolAdapter):
         "required": ["customer_name", "owner_phone", "note", "days"],
     }
 
-    def __init__(self, crm_service: CRMService, maintenance_reminder_service: MaintenanceReminderService) -> None:
+    def __init__(
+        self,
+        crm_service: CRMService,
+        maintenance_reminder_service: MaintenanceReminderService,
+        business_timezone: str,
+    ) -> None:
         self._crm_service = crm_service
         self._maintenance_reminder_service = maintenance_reminder_service
+        self._timezone = ZoneInfo(business_timezone)
 
     async def execute(self, tool_input: dict) -> ToolResult:
         customer_name = tool_input.get("customer_name")
@@ -167,5 +174,10 @@ class ScheduleMaintenanceReminderTool(ToolAdapter):
 
         return ToolResult(
             success=True,
-            output={"reminder_id": str(reminder.id), "remind_at": remind_at.isoformat(), "note": note},
+            output={
+                "reminder_id": str(reminder.id),
+                # Pre-localized -- see the comment in CreateAppointmentTool.
+                "remind_at_local": remind_at.astimezone(self._timezone).strftime("%A, %d %b %Y"),
+                "note": note,
+            },
         )
