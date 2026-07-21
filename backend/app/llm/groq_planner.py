@@ -51,9 +51,32 @@ a customer who appears there, use their exact stored phone/email in tool \
 inputs instead of guessing. If they don't appear there, tools like \
 generate_invoice_pdf and create_appointment will create a new CRM record \
 automatically from the name/contact info you give them.
-- If the request is ambiguous or cannot be satisfied with the available \
-tools, return a single "send_whatsapp_message" step asking the owner for \
-clarification, addressed to the owner's phone number.
+- NEVER invent a customer's name, email, or phone number, and never use a \
+placeholder like "Unknown" or "unknown@email.com" -- these get written to \
+the CRM and used to actually send emails/messages, so a fabricated value \
+causes a real, silent failure (e.g. an email that bounces) instead of an \
+obvious one. This includes requests that refer back to an earlier \
+message you don't have (e.g. "invoice it", "same as before", "that \
+customer") -- you only ever see the current message, not prior ones, so \
+these references are NOT resolvable by you.
+- If the request is ambiguous, refers to something you don't have context \
+for, or is missing information a tool requires (e.g. no email on file for \
+a required send_email step) and it isn't in "Known customers", do NOT \
+guess or use a placeholder -- return a single "send_whatsapp_message" step \
+asking the owner for the specific missing detail, addressed to the \
+owner's phone number.
+- This clarification check happens BEFORE you plan any other steps, not \
+after. If "customer_name" itself would have to be a pronoun, a vague \
+reference, or anything other than an actual name you were given in this \
+message or found in "Known customers" (e.g. "it", "him", "that customer", \
+"the usual guy"), do NOT call find_customer, generate_invoice_pdf, \
+create_appointment, or any other tool with that placeholder as the name -- \
+doing so creates a fake, permanent CRM record. Instead the entire plan \
+must be just the single clarifying "send_whatsapp_message" step. \
+Example: request = "invoice it for 5000 and email it over" with no \
+matching "Known customers" entry -> the correct plan is one step, asking \
+"Which customer is this invoice for, and what's their email address?" -- \
+NOT a plan that invents a customer named "it".
 - Respond with a single JSON object only -- no markdown, no commentary --
 matching exactly this JSON schema:
 {schema}

@@ -1,5 +1,6 @@
 import io
 import logging
+import re
 import uuid
 
 from reportlab.lib import colors
@@ -161,6 +162,17 @@ class GenerateInvoicePdfTool(ToolAdapter):
         )
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PLACEHOLDER_LOCAL_PARTS = {"unknown", "placeholder", "example", "test", "none", "n/a", "na", "noemail"}
+
+
+def _looks_like_placeholder_email(address: str) -> bool:
+    if not _EMAIL_RE.match(address):
+        return True
+    local_part = address.split("@", 1)[0].lower()
+    return local_part in _PLACEHOLDER_LOCAL_PARTS
+
+
 class SendEmailTool(ToolAdapter):
     name = "send_email"
     description = "Send an email to a customer or contact, e.g. to deliver an invoice link."
@@ -183,6 +195,15 @@ class SendEmailTool(ToolAdapter):
         body = tool_input.get("body")
         if not to or not subject or not body:
             return ToolResult(success=False, error="'to', 'subject' and 'body' are required")
+
+        if _looks_like_placeholder_email(to):
+            return ToolResult(
+                success=False,
+                error=(
+                    f"'{to}' doesn't look like a real email address -- refusing to send rather than "
+                    "let it silently bounce. Ask the owner for the correct address."
+                ),
+            )
 
         try:
             response = await self._email_service.send(to=to, subject=subject, html=body)
