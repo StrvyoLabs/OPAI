@@ -46,11 +46,6 @@ class Settings(BaseSettings):
     gmail_address: str = ""
     gmail_app_password: str = ""
 
-    # Shared secret Vercel Cron sends as "Authorization: Bearer <secret>" when
-    # it triggers /cron/check-reminders, so the endpoint can't be hit by
-    # anyone else. Vercel sets this automatically from the CRON_SECRET env var.
-    cron_secret: str = ""
-
     @property
     def whatsapp_graph_url(self) -> str:
         return f"https://graph.facebook.com/{self.whatsapp_api_version}/{self.whatsapp_phone_number_id}/messages"

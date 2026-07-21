@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from app.core.config import get_settings
+from app.core.ws_manager import connection_manager
 from app.db.session import async_session_maker
 from app.llm.base import PlannerLLM
 from app.llm.groq_planner import GroqPlannerLLM
@@ -95,13 +96,8 @@ def get_tool_registry() -> ToolRegistry:
     return tool_registry
 
 
+@lru_cache
 def get_planner_llm() -> PlannerLLM:
-    # Not cached: GroqPlannerLLM holds an AsyncOpenAI client, whose internal
-    # httpx connection pool is bound to whatever event loop is running when
-    # it's first used. A warm serverless container can run each invocation
-    # on a new event loop, so reusing a cached client across invocations
-    # hits the same cross-loop failure the DB engine did -- construct fresh
-    # each time instead (cheap: no I/O happens at construction).
     settings = get_settings()
     return GroqPlannerLLM(
         api_key=settings.groq_api_key,
@@ -111,7 +107,7 @@ def get_planner_llm() -> PlannerLLM:
 
 
 def get_activity_service() -> ActivityService:
-    return ActivityService()
+    return ActivityService(connection_manager)
 
 
 def get_planner_service() -> PlannerService:
