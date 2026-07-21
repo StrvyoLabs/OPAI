@@ -14,12 +14,20 @@ class KnownCustomer:
 
 
 @dataclass
+class ConversationTurn:
+    request_text: str
+    reply_text: str | None
+    created_at: datetime
+
+
+@dataclass
 class PlanningContext:
     request_text: str
     owner_phone: str
     current_time: datetime
     tools: list[ToolSpec]
     known_customers: list[KnownCustomer] = field(default_factory=list)
+    recent_conversation: list[ConversationTurn] = field(default_factory=list)
 
 
 class PlannerLLM(ABC):

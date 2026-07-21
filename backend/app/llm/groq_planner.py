@@ -51,32 +51,46 @@ a customer who appears there, use their exact stored phone/email in tool \
 inputs instead of guessing. If they don't appear there, tools like \
 generate_invoice_pdf and create_appointment will create a new CRM record \
 automatically from the name/contact info you give them.
+- Contact info belongs to exactly one customer -- never borrow another \
+entry's phone/email (including the owner's own number, or any other \
+name in "Known customers") to fill in a missing field for a DIFFERENT \
+customer. If the specific customer you resolved has no email/phone \
+listed for them, that field is missing, full stop -- treat it the same \
+as if "Known customers" had no entry at all, and ask the owner for it.
 - NEVER invent a customer's name, email, or phone number, and never use a \
 placeholder like "Unknown" or "unknown@email.com" -- these get written to \
 the CRM and used to actually send emails/messages, so a fabricated value \
 causes a real, silent failure (e.g. an email that bounces) instead of an \
-obvious one. This includes requests that refer back to an earlier \
-message you don't have (e.g. "invoice it", "same as before", "that \
-customer") -- you only ever see the current message, not prior ones, so \
-these references are NOT resolvable by you.
+obvious one.
+- "Recent conversation" (below) is how you resolve requests that refer back \
+to something earlier (e.g. "invoice it", "same as before", "that \
+customer", "him") -- it's a transcript of this same owner's recent \
+requests and how each was handled. Read it to figure out which specific \
+customer/invoice/appointment a vague reference points to, preferring the \
+most recent matching mention. Once resolved, use the real name/contact \
+info from "Known customers" or the conversation itself -- not the \
+pronoun.
 - If the request is ambiguous, refers to something you don't have context \
-for, or is missing information a tool requires (e.g. no email on file for \
-a required send_email step) and it isn't in "Known customers", do NOT \
-guess or use a placeholder -- return a single "send_whatsapp_message" step \
-asking the owner for the specific missing detail, addressed to the \
-owner's phone number.
+for even after checking "Recent conversation", or is missing information \
+a tool requires (e.g. no email on file for a required send_email step) \
+and it isn't in "Known customers", do NOT guess or use a placeholder -- \
+return a single "send_whatsapp_message" step asking the owner for the \
+specific missing detail, addressed to the owner's phone number.
 - This clarification check happens BEFORE you plan any other steps, not \
-after. If "customer_name" itself would have to be a pronoun, a vague \
-reference, or anything other than an actual name you were given in this \
-message or found in "Known customers" (e.g. "it", "him", "that customer", \
-"the usual guy"), do NOT call find_customer, generate_invoice_pdf, \
-create_appointment, or any other tool with that placeholder as the name -- \
-doing so creates a fake, permanent CRM record. Instead the entire plan \
-must be just the single clarifying "send_whatsapp_message" step. \
-Example: request = "invoice it for 5000 and email it over" with no \
-matching "Known customers" entry -> the correct plan is one step, asking \
-"Which customer is this invoice for, and what's their email address?" -- \
-NOT a plan that invents a customer named "it".
+after. If "customer_name" would still have to be a pronoun or vague \
+reference after checking "Recent conversation" and "Known customers" \
+(i.e. genuinely unresolvable), do NOT call find_customer, \
+generate_invoice_pdf, create_appointment, or any other tool with that \
+placeholder as the name -- doing so creates a fake, permanent CRM record. \
+Instead the entire plan must be just the single clarifying \
+"send_whatsapp_message" step. \
+Example: request = "invoice it for 5000 and email it over", "Recent \
+conversation" shows this owner just discussed scheduling Rahul's AC \
+servicing, and Rahul is in "Known customers" -> resolve "it" to Rahul and \
+proceed with his stored contact info. But if there's no such conversation \
+and no matching "Known customers" entry, the correct plan is one step, \
+asking "Which customer is this invoice for, and what's their email \
+address?" -- NOT a plan that invents a customer named "it".
 - Respond with a single JSON object only -- no markdown, no commentary --
 matching exactly this JSON schema:
 {schema}
@@ -115,6 +129,21 @@ class GroqPlannerLLM(PlannerLLM):
             f"{(context.current_time + timedelta(days=offset)).strftime('%A')}"
             for offset in range(14)
         )
+        if context.recent_conversation:
+            conversation_lines = []
+            for turn in context.recent_conversation:
+                conversation_lines.append(f"[{turn.created_at.isoformat()}] Owner: {turn.request_text}")
+                if turn.reply_text:
+                    conversation_lines.append(f"You replied: {turn.reply_text}")
+            recent_conversation_block = (
+                "Recent conversation with this owner, oldest first (use this to resolve vague "
+                "references in the current request like \"it\", \"that\", \"same as before\", or "
+                "\"the usual guy\" to the specific customer/invoice/appointment being discussed -- "
+                "the most recent matching mention is almost always what's meant):\n"
+                + "\n".join(conversation_lines)
+            )
+        else:
+            recent_conversation_block = "Recent conversation with this owner: (none -- this is the first request)"
         return (
             f"Owner phone: {context.owner_phone}\n\n"
             f"Current time: {context.current_time.isoformat()} "
@@ -122,6 +151,7 @@ class GroqPlannerLLM(PlannerLLM):
             f"Upcoming dates (use this table to resolve day names -- do not compute "
             f"day-of-week yourself):\n{upcoming_days}\n\n"
             f"Known customers:\n{json.dumps(known_customers, indent=2)}\n\n"
+            f"{recent_conversation_block}\n\n"
             f"Owner request:\n{context.request_text}\n\n"
             f"Available tools:\n{json.dumps(tool_descriptions, indent=2)}"
         )

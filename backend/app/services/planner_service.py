@@ -3,17 +3,21 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.llm.base import KnownCustomer, PlannerLLM, PlanningContext
+from app.llm.base import ConversationTurn, KnownCustomer, PlannerLLM, PlanningContext
 from app.models.activity import ActivityType
-from app.models.plan import Plan, PlanStep
+from app.models.plan import Plan, PlanStep, PlanStepStatus
 from app.models.task import Task, TaskStatus
 from app.services.activity_service import ActivityService
 from app.services.crm_service import CRMService
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+RECENT_CONVERSATION_LIMIT = 6
 
 
 class PlanningError(Exception):
@@ -56,8 +60,9 @@ class PlannerService:
         try:
             t0 = time.monotonic()
             customers = await self._crm_service.list_customers()
+            recent_conversation = await self._recent_conversation(session, task)
             t1 = time.monotonic()
-            logger.info("TIMING list_customers: %.2fs", t1 - t0)
+            logger.info("TIMING list_customers+recent_conversation: %.2fs", t1 - t0)
             context = PlanningContext(
                 request_text=task.raw_request,
                 owner_phone=task.owner_phone,
@@ -66,6 +71,7 @@ class PlannerService:
                 known_customers=[
                     KnownCustomer(name=c.name, phone=c.phone, email=c.email) for c in customers
                 ],
+                recent_conversation=recent_conversation,
             )
             plan_result = await self._llm.generate_plan(context)
             t2 = time.monotonic()
@@ -128,3 +134,41 @@ class PlannerService:
             payload={"step_count": len(plan.steps)},
         )
         return plan
+
+    async def _recent_conversation(self, session: AsyncSession, task: Task) -> list[ConversationTurn]:
+        """Loads the owner's last few finished requests (and how they were
+        answered) so the planner can resolve vague references like "it" or
+        "that customer" to whatever was actually being discussed, instead of
+        having to treat every message as a blank slate."""
+
+        result = await session.execute(
+            select(Task)
+            .where(
+                Task.owner_phone == task.owner_phone,
+                Task.id != task.id,
+                Task.status.in_([TaskStatus.COMPLETED, TaskStatus.COMPLETED_WITH_ERRORS]),
+            )
+            .options(selectinload(Task.plans).selectinload(Plan.steps))
+            .order_by(Task.created_at.desc())
+            .limit(RECENT_CONVERSATION_LIMIT)
+        )
+        recent_tasks = list(result.scalars().all())
+        recent_tasks.reverse()  # oldest first, so the transcript reads chronologically
+
+        turns: list[ConversationTurn] = []
+        for recent_task in recent_tasks:
+            if not recent_task.plans:
+                continue
+            latest_plan = max(recent_task.plans, key=lambda p: p.created_at)
+            reply_text = latest_plan.summary
+            for step in latest_plan.steps:
+                if step.tool_name == "send_whatsapp_message" and step.status == PlanStepStatus.SUCCEEDED:
+                    reply_text = step.tool_input.get("body", reply_text)
+            turns.append(
+                ConversationTurn(
+                    request_text=recent_task.raw_request,
+                    reply_text=reply_text,
+                    created_at=recent_task.created_at,
+                )
+            )
+        return turns

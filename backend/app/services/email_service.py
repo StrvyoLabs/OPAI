@@ -18,6 +18,13 @@ class EmailConfigError(Exception):
 
 
 class EmailService(ABC):
+    @property
+    @abstractmethod
+    def sender_address(self) -> str | None:
+        """The configured "from" address -- used to guard against a plan
+        accidentally sending a customer's email to the business's own inbox."""
+        ...
+
     @abstractmethod
     async def send(self, to: str, subject: str, html: str) -> dict: ...
 
@@ -36,6 +43,10 @@ class ResendEmailService(EmailService):
     @property
     def _configured(self) -> bool:
         return bool(self._settings.resend_api_key)
+
+    @property
+    def sender_address(self) -> str | None:
+        return self._settings.resend_from_email
 
     async def send(self, to: str, subject: str, html: str) -> dict:
         if not self._configured:
@@ -69,6 +80,10 @@ class GmailSMTPEmailService(EmailService):
     @property
     def _configured(self) -> bool:
         return bool(self._settings.gmail_address and self._settings.gmail_app_password)
+
+    @property
+    def sender_address(self) -> str | None:
+        return self._settings.gmail_address
 
     def _send_sync(self, to: str, subject: str, html: str) -> None:
         message = EmailMessage()

@@ -205,6 +205,17 @@ class SendEmailTool(ToolAdapter):
                 ),
             )
 
+        sender_address = self._email_service.sender_address
+        if sender_address and to.strip().lower() == sender_address.strip().lower():
+            return ToolResult(
+                success=False,
+                error=(
+                    f"'{to}' is this business's own sending address, not a customer's -- refusing to "
+                    "send a customer email to it. The customer's real email is probably missing; ask "
+                    "the owner for it instead of reusing the business's own address."
+                ),
+            )
+
         try:
             response = await self._email_service.send(to=to, subject=subject, html=body)
         except EmailConfigError as exc:
